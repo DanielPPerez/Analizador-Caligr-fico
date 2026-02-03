@@ -3,57 +3,63 @@ import numpy as np
 from skimage.morphology import skeletonize
 import scipy.ndimage as ndimage
 
-def prune_skeleton(skel, min_branch_length=20):
+def prune_skeleton(skel, min_branch_length=30):
     """
-    Poda ramas muertas preservando la estructura principal.
+    Elimina ramas cortas que salen de intersecciones (común en M, N, W).
     """
-    skel = skel.copy()
+    skel = skel.copy().astype(np.uint8)
     
-    def count_neighbors(P):
-        # Cuenta vecinos en una vecindad de 3x3
-        return np.sum(P) - 1 if P[4] == 1 else 0
+    def get_neighbors(y, x, img):
+        y0, y1 = max(0, y-1), min(img.shape[0], y+2)
+        x0, x1 = max(0, x-1), min(img.shape[1], x+2)
+        neighborhood = img[y0:y1, x0:x1]
+        indices = np.argwhere(neighborhood == 1)
+        return [(y0 + i[0], x0 + i[1]) for i in indices if not (y0 + i[0] == y and x0 + i[1] == x)]
 
-    iteration_limit = 5
-    for _ in range(iteration_limit):
+    while True:
         changed = False
-        neighbor_map = ndimage.generic_filter(skel, count_neighbors, size=(3, 3), mode='constant')
+        # Contar vecinos de cada píxel
+        # 1 vecino = punta (endpoint)
+        # >2 vecinos = cruce (junction)
+        neighbor_count = ndimage.generic_filter(
+            skel, lambda P: np.sum(P) - 1 if P[4] == 1 else 0, size=(3, 3), mode='constant'
+        )
         
-        # Encontrar puntas (píxeles con solo 1 vecino)
-        endpoints = np.argwhere(neighbor_map == 1)
-
+        endpoints = np.argwhere(neighbor_count == 1)
+        
         for ep in endpoints:
             branch = []
             curr = tuple(ep)
+            is_spur = False
             
-            # Rastrear la rama desde la punta hasta una intersección
-            while True:
+            # Rastrear la rama desde la punta hacia adentro
+            for _ in range(min_branch_length):
                 branch.append(curr)
-                y, x = curr
+                neighbors = get_neighbors(curr[0], curr[1], skel)
+                next_pts = [n for n in neighbors if n not in branch]
                 
-                # Buscar el siguiente píxel conectado
-                y0, y1 = max(0, y-1), min(skel.shape[0], y+2)
-                x0, x1 = max(0, x-1), min(skel.shape[1], x+2)
-                
-                neighborhood = skel[y0:y1, x0:x1]
-                neighbors = np.argwhere(neighborhood == 1)
-                
-                next_pts = []
-                for n in neighbors:
-                    nxt = (y0 + n[0], x0 + n[1])
-                    if nxt not in branch:
-                        next_pts.append(nxt)
-                
-                # Si llegamos a una intersección (>1 vecino) o callejón sin salida
-                if len(next_pts) != 1:
+                if len(next_pts) == 0:
+                    # Rama aislada, se borra
+                    is_spur = True
                     break
+                if len(next_pts) > 1:
+                    # Encontramos una intersección (Junction)
+                    is_spur = True
+                    break
+                
                 curr = next_pts[0]
+                # Si el punto actual es una intersección (según el mapa original)
+                if neighbor_count[curr[0], curr[1]] > 2:
+                    is_spur = True
+                    break
             
-            # Si la rama es muy corta, la borramos
-            if len(branch) < min_branch_length:
+            # Si la rama termina en una intersección y es corta, es un "spur"
+            if is_spur and len(branch) < min_branch_length:
                 for y_b, x_b in branch:
                     skel[y_b, x_b] = 0
                 changed = True
         
+        # Si en una pasada no hubo cambios, el esqueleto está limpio
         if not changed:
             break
             
@@ -64,30 +70,25 @@ def preprocess_robust(img_bytes):
     img = cv2.imdecode(nparr, cv2.IMREAD_GRAYSCALE)
     if img is None: return None
 
-    # 1. Binarización
+    # Binarización y limpieza inicial
     binary = cv2.adaptiveThreshold(img, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
     binary = cv2.medianBlur(binary, 3)
     
-    # 2. Rotación 
     coords = cv2.findNonZero(binary)
     if coords is None: return None
+    x, y, w, h = cv2.boundingRect(coords)
+    crop = binary[y:y+h, x:x+w]
     
-    # 3. CREAR LIENZO CUADRADO 
-    x, y, w_c, h_c = cv2.boundingRect(coords)
-    crop = binary[y:y+h_c, x:x+w_c]
+    # Normalización a 256x256 con margen
+    side = max(w, h) + 60
+    square = np.zeros((side, side), dtype=np.uint8)
+    square[(side-h)//2 : (side-h)//2 + h, (side-w)//2 : (side-w)//2 + w] = crop
+    resized = cv2.resize(square, (256, 256), interpolation=cv2.INTER_AREA)
     
-    side = max(w_c, h_c) + 40 
-    square_canvas = np.zeros((side, side), dtype=np.uint8)
-    off_y = (side - h_c) // 2
-    off_x = (side - w_c) // 2
-    square_canvas[off_y:off_y+h_c, off_x:off_x+w_c] = crop
+    # Suavizado para eliminar esquinas cuadradas pre-esqueleto
+    resized = cv2.GaussianBlur(resized, (9, 9), 0)
+    _, resized = cv2.threshold(resized, 110, 255, cv2.THRESH_BINARY)
 
-    # 4. REDIMENSIONAR A 256x256
-    resized = cv2.resize(square_canvas, (256, 256), interpolation=cv2.INTER_AREA)
-    _, resized = cv2.threshold(resized, 127, 255, cv2.THRESH_BINARY)
-    
-    # 5. Esqueleto y poda 
-    skel = skeletonize(resized > 0).astype(np.uint8)
-    skel = prune_skeleton(skel, min_branch_length=15)
-    
-    return skel
+    # Esqueletización y Poda
+    skel = skeletonize(resized > 0, method='lee').astype(np.uint8)
+    return prune_skeleton(skel, min_branch_length=20)
