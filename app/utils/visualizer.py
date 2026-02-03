@@ -1,45 +1,54 @@
-import cv2
-import matplotlib
-matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import io
 import base64
 import numpy as np
+import cv2
 
-# Tamaño común para la comparación visual
-PLOT_SIZE = 256
+def generate_comparison_plot(skel_p, skel_a, score):
+    # 1. Definir tamaño objetivo
+    target_size = (256, 256)
+    
+    # 2. Asegurar que ambos tengan el mismo tamaño 
+    if skel_p.shape != target_size:
+        skel_p = cv2.resize(skel_p.astype(np.uint8), target_size, interpolation=cv2.INTER_NEAREST)
+    if skel_a.shape != target_size:
+        skel_a = cv2.resize(skel_a.astype(np.uint8), target_size, interpolation=cv2.INTER_NEAREST)
 
-def _same_size(skel: np.ndarray, size: int) -> np.ndarray:
-    """Redimensiona el esqueleto a size x size si no lo es ya."""
-    if skel.shape[0] == size and skel.shape[1] == size:
-        return skel
-    resized = cv2.resize(
-        skel.astype(np.uint8),
-        (size, size),
-        interpolation=cv2.INTER_NEAREST
-    )
-    return (resized > 0).astype(np.uint8)
+    # 3. Crear el lienzo RGB (Fondo oscuro para mejor contraste)
+    h, w = target_size
+    overlay = np.zeros((h, w, 3), dtype=np.uint8)
 
-def generate_comparison_plot(skel_p: np.ndarray, skel_a: np.ndarray, score: float) -> str:
-    """
-    Genera una imagen de comparación patrón vs alumno en base64.
-    Normaliza ambos esqueletos al mismo tamaño para evitar errores de shape.
-    """
-    p = _same_size(skel_p, PLOT_SIZE)
-    a = _same_size(skel_a, PLOT_SIZE)
+    # Lógica de colores para Debug Profesional:
+    # Amarillo (255, 255, 0) -> Coincidencia perfecta (Intersección)
+    # Verde (0, 255, 0)      -> Parte de la plantilla que no se tocó
+    # Rojo (255, 0, 0)       -> Parte que el alumno dibujó fuera de la plantilla
+    
+    intersection = np.logical_and(skel_p > 0, skel_a > 0)
+    only_p = np.logical_and(skel_p > 0, np.logical_not(skel_a > 0))
+    only_a = np.logical_and(skel_a > 0, np.logical_not(skel_p > 0))
 
-    overlay = np.zeros((PLOT_SIZE, PLOT_SIZE, 3), dtype=np.uint8)
-    overlay[p > 0] = [0, 255, 0]   # Patrón verde
-    overlay[a > 0] = [255, 0, 0]   # Alumno rojo
+    overlay[only_p] = [0, 150, 0]       # Verde oscuro (Guía)
+    overlay[only_a] = [255, 50, 50]     # Rojo (Error/Desvío)
+    overlay[intersection] = [255, 255, 0] # Amarillo (Acierto)
 
-    fig, ax = plt.subplots(figsize=(5, 5))
+    # 4. Crear la figura de Matplotlib
+    fig, ax = plt.subplots(figsize=(6, 6))
     ax.imshow(overlay)
-    ax.set_title(f"Resultado Final - Score: {score}")
-    ax.axis("off")
+    
+    # Añadir texto con el Score y leyenda
+    ax.set_title(f"Evaluación: {score:.2f}%", color="white", fontsize=14, fontweight='bold')
+    
+    ax.text(5, 245, "Verde: Guía | Rojo: Error | Amarillo: Acierto", 
+            color="white", fontsize=8, bbox=dict(facecolor='black', alpha=0.5))
+    
+    ax.axis('off')
+    fig.patch.set_facecolor('#1e1e1e') 
 
+    # 5. Convertir gráfica a Base64
     buf = io.BytesIO()
-    plt.savefig(buf, format="png", bbox_inches="tight", dpi=100)
-    plt.close()
+    plt.savefig(buf, format='png', bbox_inches='tight', facecolor=fig.get_facecolor())
     buf.seek(0)
-    return base64.b64encode(buf.read()).decode("utf-8")
-
+    img_str = base64.b64encode(buf.read()).decode('utf-8')
+    plt.close(fig) 
+    
+    return img_str

@@ -68,16 +68,15 @@ def preprocess_robust(img_bytes):
     binary = cv2.adaptiveThreshold(img, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
     binary = cv2.medianBlur(binary, 3)
     
-    # 2. Rotación (opcional, pero ayuda)
+    # 2. Rotación 
     coords = cv2.findNonZero(binary)
     if coords is None: return None
     
-    # 3. CREAR LIENZO CUADRADO (Para que coincida con la plantilla)
+    # 3. CREAR LIENZO CUADRADO 
     x, y, w_c, h_c = cv2.boundingRect(coords)
     crop = binary[y:y+h_c, x:x+w_c]
     
-    # Igual que en el generador: ponemos el recorte en un cuadrado
-    side = max(w_c, h_c) + 40 # Margen pequeño
+    side = max(w_c, h_c) + 40 
     square_canvas = np.zeros((side, side), dtype=np.uint8)
     off_y = (side - h_c) // 2
     off_x = (side - w_c) // 2
@@ -87,8 +86,8 @@ def preprocess_robust(img_bytes):
     resized = cv2.resize(square_canvas, (256, 256), interpolation=cv2.INTER_AREA)
     _, resized = cv2.threshold(resized, 127, 255, cv2.THRESH_BINARY)
     
-    # 5. Esqueleto y poda (Usa el mismo valor de poda que en la plantilla)
+    # 5. Esqueleto y poda 
     skel = skeletonize(resized > 0).astype(np.uint8)
-    skel = prune_skeleton(skel, min_branch_length=15) # Ajustado a 15
+    skel = prune_skeleton(skel, min_branch_length=15)
     
     return skel
