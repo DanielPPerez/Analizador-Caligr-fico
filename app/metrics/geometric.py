@@ -1,6 +1,48 @@
 import numpy as np
-from scipy.spatial.distance import directed_hausdorff
 import cv2
+from scipy.spatial import procrustes
+from scipy.spatial.distance import directed_hausdorff
+from skimage.metrics import structural_similarity as ssim
+
+from app.core.config import PROCRUSTES_N_POINTS
+
+
+def _resample_sequence_to_n(points, n):
+    """Remuestrea una secuencia de puntos a exactamente n puntos por interpolación lineal."""
+    if len(points) == 0:
+        return np.array([]).reshape(0, 2)
+    if len(points) == 1:
+        return np.tile(points, (n, 1))
+    # Cerrar el contorno para caracteres con bucles 
+    pts = np.vstack([points, points[0]])
+    cumlen = np.zeros(len(pts))
+    cumlen[1:] = np.cumsum(np.linalg.norm(np.diff(pts, axis=0), axis=1))
+    total = cumlen[-1]
+    if total == 0:
+        return np.tile(points.mean(axis=0), (n, 1))
+    target = np.linspace(0, total * (n - 1) / n, n, endpoint=False)
+    idx = np.searchsorted(cumlen, target, side="right") - 1
+    idx = np.clip(idx, 0, len(pts) - 2)
+    t = (target - cumlen[idx]) / (cumlen[idx + 1] - cumlen[idx] + 1e-9)
+    return (1 - t)[:, None] * pts[idx] + t[:, None] * pts[idx + 1]
+
+
+def calculate_procrustes(skel_p, skel_a, seq_p, seq_a):
+    """
+    Alineación Procrustes: escala, rotación y traslación óptimas para minimizar
+    la suma de cuadrados de diferencias.
+    """
+    if len(seq_p) < 3 or len(seq_a) < 3:
+        return 999.0, 0.0  
+    pts_p = _resample_sequence_to_n(seq_p, PROCRUSTES_N_POINTS)
+    pts_a = _resample_sequence_to_n(seq_a, PROCRUSTES_N_POINTS)
+    try:
+        mtx1, mtx2, disparity = procrustes(pts_p, pts_a)
+    except (ValueError, np.linalg.LinAlgError):
+        return 999.0, 0.0
+    score_proc = max(0.0, 100.0 - disparity * 50.0)
+    return float(round(disparity, 4)), float(round(score_proc, 2))
+
 
 def align_skeletons(skel_p, skel_a):
     """
@@ -38,62 +80,50 @@ def align_skeletons(skel_p, skel_a):
 
 def calculate_geometric(skel_p, skel_a, tolerance_radius=2, align=True):
     """
-    Calcula métricas geométricas entre dos esqueletos.
-    
-    Args:
-        skel_p: Esqueleto de la plantilla (patrón)
-        skel_a: Esqueleto del alumno
-        tolerance_radius: Radio de tolerancia en píxeles para el IOU (default: 2)
-                         Permite pequeñas diferencias de posición sin penalizar tanto
-        align: Si True, alinea los esqueletos por centroide antes de calcular métricas
-    
-    Returns:
-        dict con iou, hausdorff y score
+    Calcula métricas geométricas entre dos esqueletos: SSIM (en lugar de IoU),
+    Procrustes (forma global, más tolerante) y Hausdorff (complementario).
     """
+    from app.metrics.trajectory import get_sequence_from_skel
+
     if skel_p.shape != skel_a.shape:
         skel_a = cv2.resize(skel_a.astype(np.uint8), (skel_p.shape[1], skel_p.shape[0]), interpolation=cv2.INTER_NEAREST)
     
-    # Alinear esqueletos si se solicita
     if align:
         skel_p, skel_a = align_skeletons(skel_p, skel_a)
     
-    # IOU exacto (píxel a píxel) - para referencia
-    intersection_exact = np.logical_and(skel_p > 0, skel_a > 0).sum()
-    union_exact = np.logical_or(skel_p > 0, skel_a > 0).sum()
-    iou_exact = (intersection_exact / union_exact * 100) if union_exact != 0 else 0.0
+    # SSIM (Structural Similarity Index)
+    img_p = (skel_p > 0).astype(np.uint8)
+    img_a = (skel_a > 0).astype(np.uint8)
+    ssim_val = ssim(img_p, img_a, data_range=1)
+    if np.isnan(ssim_val):
+        ssim_val = 0.0
+    # SSIM en [-1, 1] -> score 0-100
+    ssim_score = float(round((ssim_val + 1) / 2 * 100, 2))
+    ssim_val = float(round(ssim_val, 4))
     
-    # IOU con tolerancia espacial (dilatación)
-    # Esto permite que píxeles cercanos se consideren como coincidentes
-    if tolerance_radius > 0:
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2*tolerance_radius+1, 2*tolerance_radius+1))
-        skel_p_dilated = cv2.dilate((skel_p > 0).astype(np.uint8), kernel, iterations=1)
-        skel_a_dilated = cv2.dilate((skel_a > 0).astype(np.uint8), kernel, iterations=1)
-        
-        intersection_tol = np.logical_and(skel_p_dilated > 0, skel_a_dilated > 0).sum()
-        union_tol = np.logical_or(skel_p_dilated > 0, skel_a_dilated > 0).sum()
-        iou = (intersection_tol / union_tol * 100) if union_tol != 0 else 0.0
-    else:
-        iou = iou_exact
+    # Secuencias ordenadas para Procrustes
+    seq_p = get_sequence_from_skel(skel_p)
+    seq_a = get_sequence_from_skel(skel_a)
+    procrustes_disparity, procrustes_score = calculate_procrustes(skel_p, skel_a, seq_p, seq_a)
     
-    # Calcular Hausdorff distance
+    # Hausdorff 
     pts_p = np.argwhere(skel_p > 0)
     pts_a = np.argwhere(skel_a > 0)
-    
     if len(pts_p) == 0 or len(pts_a) == 0:
         haus_dist = 999.0
     else:
         d1 = directed_hausdorff(pts_p, pts_a)[0]
         d2 = directed_hausdorff(pts_a, pts_p)[0]
         haus_dist = max(d1, d2)
-
     if np.isinf(haus_dist) or np.isnan(haus_dist):
         haus_dist = 999.0
-
-    score = max(0.0, 100.0 - (float(haus_dist) * 1.5))
+    score_hausdorff = max(0.0, 100.0 - (float(haus_dist) * 1.5))
     
     return {
-        "iou": float(round(iou, 2)), 
-        "iou_exact": float(round(iou_exact, 2)),  # Para debug
-        "hausdorff": float(round(haus_dist, 2)), 
-        "score": float(round(score, 2))
+        "ssim": ssim_val,
+        "ssim_score": ssim_score,
+        "procrustes_disparity": procrustes_disparity,
+        "procrustes_score": procrustes_score,
+        "hausdorff": float(round(haus_dist, 2)),
+        "score": float(round(score_hausdorff, 2)), 
     }

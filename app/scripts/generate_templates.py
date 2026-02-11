@@ -1,14 +1,16 @@
 import os
+import sys
+
 import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 from skimage.morphology import skeletonize
-import sys
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 from app.core.processor import prune_skeleton
+from app.core.config import TARGET_SHAPE, MIN_BRANCH_LENGTH
 
-FONT_PATH = "app/fonts/KGPrimaryPenmanship.ttf" 
+FONT_PATH = "app/fonts/KGPrimaryPenmanship.ttf"
 OUTPUT_DIR = "app/templates"
 ALPHABET = "ABCDEFGHIJKLMNÑOPQRSTUVWXYZabcdefghijklmnñopqrstuvwxyz0123456789"
 
@@ -38,32 +40,21 @@ def generate_npy_templates():
         
         binary = np.array(img)
 
-        # --- TRATAMIENTO PARA INTERSECCIONES LIMPIAS ---
-        # Aumentamos el desenfoque para que las puntas de M, N, W se redondeen 
-        # y no generen colas de esqueleto.
-        binary = cv2.GaussianBlur(binary, (55, 55), 0) 
-        _, binary = cv2.threshold(binary, 125, 255, cv2.THRESH_BINARY)
-
-        kernel_round = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (31, 31))
-        binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel_round)
-
-        # Centrado y redimensionado
+        # Pipeline alineado con preprocess_robust (alumno): mismo blur y umbral
         coords = cv2.findNonZero(binary)
         if coords is not None:
             x, y, w_b, h_b = cv2.boundingRect(coords)
-            side = max(w_b, h_b) + 120
+            side = max(w_b, h_b) + 60
             square_canvas = np.zeros((side, side), dtype=np.uint8)
             off_y, off_x = (side - h_b) // 2, (side - w_b) // 2
             square_canvas[off_y:off_y+h_b, off_x:off_x+w_b] = binary[y:y+h_b, x:x+w_b]
-            
-            resized = cv2.resize(square_canvas, (256, 256), interpolation=cv2.INTER_AREA)
-            _, resized = cv2.threshold(resized, 127, 255, cv2.THRESH_BINARY)
 
-            # Esqueletización método Lee
+            resized = cv2.resize(square_canvas, TARGET_SHAPE, interpolation=cv2.INTER_AREA)
+            resized = cv2.GaussianBlur(resized, (9, 9), 0)
+            _, resized = cv2.threshold(resized, 110, 255, cv2.THRESH_BINARY)
+
             skel = skeletonize(resized > 0, method='lee').astype(np.uint8)
-            
-            # Poda agresiva: 35 píxeles es ideal para 256x256
-            skel = prune_skeleton(skel, min_branch_length=35)
+            skel = prune_skeleton(skel, min_branch_length=MIN_BRANCH_LENGTH)
             
             name = get_safe_filename(char)
             np.save(os.path.join(OUTPUT_DIR, f"{name}.npy"), skel)

@@ -1,28 +1,36 @@
-def calculate_final_score(geo_metrics, topo_match, traj_dist):
+from app.core.config import HAUSDORFF_FACTOR, HAUSDORFF_TOLERANCE
+
+
+def calculate_final_score(geo_metrics, topo_match, traj_dist, cosine_segment_score=50.0):
     """
-    Ponderación sugerida:
-    - Hausdorff (Forma general): 40%
-    - IoU (Solapamiento): 30%
-    - Topología (Estructura): 20%
-    - Trayectoria (Fluidez): 10%
+    Ponderación orientada a tutor. Escalado para resolución 128×128.
     """
+    score_proc = geo_metrics.get("procrustes_score", 0.0)
+
+    h_dist = geo_metrics.get("hausdorff", 999.0)
+    adjusted_h = max(0, h_dist - HAUSDORFF_TOLERANCE)
+    score_h = max(0, 100 - (adjusted_h * HAUSDORFF_FACTOR))
     
-    # 1. Score de Hausdorff 
-    h_dist = geo_metrics['hausdorff']
-    tolerance = 10.0
-    adjusted_h = max(0, h_dist - tolerance)
-    score_h = max(0, 100 - (adjusted_h * 1.8))
+    # 3. SSIM 
+    score_ssim = geo_metrics.get("ssim_score", 0.0)
     
-    # 2. Score IoU
-    score_iou = min(100, geo_metrics['iou'] * 1.5)
-    
-    # 3. Score Topología 
+    # 4. Topología
     score_topo = 100 if topo_match else 30
     
-    # 4. Score Trayectoria 
+    # 5. Trayectoria
     score_traj = max(0, 100 - (traj_dist * 3))
     
-    # Cálculo Final
-    final = (score_h * 0.45) + (score_iou * 0.20) + (score_topo * 0.25) + (score_traj * 0.10)
+    # 6. Similitud de coseno por segmentos (ángulos)
+    score_cos = max(0.0, min(100.0, cosine_segment_score))
+    
+    
+    final = (
+        score_proc * 0.28
+        + score_h * 0.12
+        + score_ssim * 0.20
+        + score_topo * 0.25
+        + score_traj * 0.10
+        + score_cos * 0.05
+    )
     
     return round(final, 2)

@@ -1,20 +1,20 @@
-import matplotlib.pyplot as plt
 import io
 import base64
-import numpy as np
+
 import cv2
+import matplotlib.pyplot as plt
+import numpy as np
+
+from app.core.config import TARGET_SHAPE
+
 
 def generate_comparison_plot(skel_p, skel_a, score):
-    # 1. Definir tamaño objetivo
-    target_size = (256, 256)
-    
-    # 2. Asegurar que ambos tengan el mismo tamaño 
+    target_size = TARGET_SHAPE
     if skel_p.shape != target_size:
         skel_p = cv2.resize(skel_p.astype(np.uint8), target_size, interpolation=cv2.INTER_NEAREST)
     if skel_a.shape != target_size:
         skel_a = cv2.resize(skel_a.astype(np.uint8), target_size, interpolation=cv2.INTER_NEAREST)
 
-    # 3. Crear el lienzo RGB (Fondo oscuro para mejor contraste)
     h, w = target_size
     overlay = np.zeros((h, w, 3), dtype=np.uint8)
 
@@ -31,15 +31,12 @@ def generate_comparison_plot(skel_p, skel_a, score):
     overlay[only_a] = [255, 50, 50]     # Rojo (Error/Desvío)
     overlay[intersection] = [255, 255, 0] # Amarillo (Acierto)
 
-    # 4. Crear la figura de Matplotlib
-    fig, ax = plt.subplots(figsize=(6, 6))
+    fig, ax = plt.subplots(figsize=(4, 4))
     ax.imshow(overlay)
-    
-    # Añadir texto con el Score y leyenda
-    ax.set_title(f"Evaluación: {score:.2f}%", color="white", fontsize=14, fontweight='bold')
-    
-    ax.text(5, 245, "Verde: Guía | Rojo: Error | Amarillo: Acierto", 
-            color="white", fontsize=8, bbox=dict(facecolor='black', alpha=0.5))
+    ax.set_title(f"Evaluación: {score:.2f}%", color="white", fontsize=12, fontweight="bold")
+    legend_y = h - 6
+    ax.text(4, legend_y, "Verde: Guía | Rojo: Error | Amarillo: Acierto",
+            color="white", fontsize=7, bbox=dict(facecolor="black", alpha=0.5))
     
     ax.axis('off')
     fig.patch.set_facecolor('#1e1e1e') 
