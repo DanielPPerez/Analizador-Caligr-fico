@@ -3,6 +3,7 @@ import numpy as np
 import cv2
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from app.core.processor import preprocess_robust
+# from app.core.processor import get_image_for_resnet  # Para ResNet/OCR futuro
 from app.metrics.geometric import calculate_geometric
 from app.metrics.topologic import get_topology
 from app.metrics.trajectory import calculate_trajectory_dist

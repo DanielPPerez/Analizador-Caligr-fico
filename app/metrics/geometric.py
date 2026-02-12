@@ -80,8 +80,7 @@ def align_skeletons(skel_p, skel_a):
 
 def calculate_geometric(skel_p, skel_a, tolerance_radius=2, align=True):
     """
-    Calcula métricas geométricas entre dos esqueletos: SSIM (en lugar de IoU),
-    Procrustes (forma global, más tolerante) y Hausdorff (complementario).
+    Calcula métricas geométricas entre dos esqueletos: SSIM, Procrustes  y Hausdorff.
     """
     from app.metrics.trajectory import get_sequence_from_skel
 
