@@ -69,9 +69,17 @@ async def evaluate(file: UploadFile = File(...), target_char: str = Form(...)):
     score_final = calculate_final_score(geo, topo_match, traj_dist, cosine_segment_score=cosine_score)
     v_img = generate_comparison_plot(skel_p, skel_a, score_final)
 
+    # Plantilla como imagen base64 (esqueleto en blanco sobre negro)
+    import base64
+    template_img = (skel_p * 255).astype(np.uint8)
+    _, buf = cv2.imencode(".png", template_img)
+    template_b64 = base64.b64encode(buf).decode("utf-8")
+
     return {
         "char": target_char,
+        "detected_char": None,  # Pendiente: OCR/ResNet para detectar carácter real
         "score_final": score_final,
+        "template_b64": template_b64,
         "metrics": {
             "geometric": geo,
             "topology": {"match": topo_match, "student": topo_a, "pattern": topo_p},
@@ -79,5 +87,5 @@ async def evaluate(file: UploadFile = File(...), target_char: str = Form(...)):
             "trajectory_error": traj_dist,
             "segment_cosine": {"cosine": cosine_cos, "score": cosine_score},
         },
-        "image_b64": v_img
+        "image_b64": v_img,
     }

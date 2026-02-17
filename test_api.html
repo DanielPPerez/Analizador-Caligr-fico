@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test API - Evaluación Caligrafía</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 1.5rem;
+            background: #1a1a2e;
+            color: #eee;
+        }
+        h1 { color: #4fc3f7; margin-bottom: 0.5rem; }
+        .subtitle { color: #90a4ae; font-size: 0.9rem; margin-bottom: 2rem; }
+        section {
+            background: #16213e;
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+            border: 1px solid #0f3460;
+        }
+        section h2 {
+            color: #4fc3f7;
+            margin-top: 0;
+            font-size: 1.1rem;
+        }
+        .upload-row {
+            display: flex;
+            gap: 1rem;
+            flex-wrap: wrap;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+        input[type="file"] { display: none; }
+        .btn {
+            padding: 0.6rem 1.2rem;
+            border-radius: 8px;
+            border: none;
+            cursor: pointer;
+            font-weight: 600;
+            transition: opacity 0.2s;
+        }
+        .btn:hover { opacity: 0.9; }
+        .btn-primary {
+            background: #4fc3f7;
+            color: #1a1a2e;
+        }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .char-input {
+            width: 3rem;
+            padding: 0.5rem;
+            font-size: 1.5rem;
+            text-align: center;
+            border-radius: 8px;
+            border: 2px solid #0f3460;
+            background: #0f3460;
+            color: #fff;
+        }
+        .images-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-top: 1rem;
+        }
+        .img-card {
+            background: #0f3460;
+            border-radius: 8px;
+            padding: 0.75rem;
+            text-align: center;
+        }
+        .img-card img {
+            max-width: 100%;
+            height: 128px;
+            object-fit: contain;
+            background: #1a1a2e;
+            border-radius: 4px;
+        }
+        .img-card span {
+            display: block;
+            margin-top: 0.5rem;
+            font-size: 0.85rem;
+            color: #90a4ae;
+        }
+        .score-big {
+            font-size: 2rem;
+            font-weight: 700;
+            color: #4fc3f7;
+            text-align: center;
+            margin: 1rem 0;
+        }
+        .metrics-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .metrics-table th, .metrics-table td {
+            padding: 0.6rem 1rem;
+            text-align: left;
+            border-bottom: 1px solid #0f3460;
+        }
+        .metrics-table th { color: #90a4ae; font-weight: 500; }
+        .metric-name { width: 45%; }
+        .metric-value { text-align: right; font-weight: 600; color: #4fc3f7; }
+        .metric-weight { color: #78909c; font-size: 0.85rem; }
+        .detected-char {
+            font-size: 4rem;
+            text-align: center;
+            padding: 1rem;
+            background: #0f3460;
+            border-radius: 12px;
+            margin: 1rem 0;
+            border: 2px dashed #4fc3f7;
+        }
+        .placeholder-ocr { color: #78909c; font-size: 1rem; }
+        .error-msg { color: #ef5350; padding: 1rem; background: rgba(239,83,80,0.1); border-radius: 8px; }
+    </style>
+</head>
+<body>
+    <h1>Test API - Evaluación de Caligrafía</h1>
+    <p class="subtitle">Sube una imagen y selecciona el carácter a comparar. El backend debe estar en http://localhost:8000</p>
+
+    <section>
+        <h2>1. Subir imagen y evaluar</h2>
+        <div class="upload-row">
+            <label class="btn btn-primary" for="fileInput">Seleccionar imagen</label>
+            <input type="file" id="fileInput" accept="image/*">
+            <span>Carácter a comparar:</span>
+            <input type="text" class="char-input" id="targetChar" maxlength="1" placeholder="B" value="B">
+            <button class="btn btn-primary" id="btnEvaluate" disabled>Evaluar</button>
+        </div>
+        <div id="uploadPreview" class="images-grid"></div>
+    </section>
+
+    <section id="resultsSection" style="display:none">
+        <h2>2. Imágenes y resultado</h2>
+        <div class="images-grid" id="resultsGrid"></div>
+        <p class="score-big" id="scoreFinal">—</p>
+    </section>
+
+    <section id="metricsSection" style="display:none">
+        <h2>3. Métricas que influyeron en el score final</h2>
+        <table class="metrics-table" id="metricsTable">
+            <thead>
+                <tr><th>Métrica</th><th>Score</th><th>Peso</th></tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </section>
+
+    <section id="detectedSection" style="display:none">
+        <h2>4. Carácter detectado (OCR)</h2>
+        <div class="detected-char" id="detectedChar">—</div>
+        <p class="placeholder-ocr" id="ocrPlaceholder">Pendiente: se integrará OCR/ResNet para detectar el carácter que realmente escribió el alumno.</p>
+    </section>
+
+    <script>
+        const API_URL = 'http://localhost:8000';
+        const fileInput = document.getElementById('fileInput');
+        const targetChar = document.getElementById('targetChar');
+        const btnEvaluate = document.getElementById('btnEvaluate');
+        const uploadPreview = document.getElementById('uploadPreview');
+        const resultsSection = document.getElementById('resultsSection');
+        const resultsGrid = document.getElementById('resultsGrid');
+        const scoreFinal = document.getElementById('scoreFinal');
+        const metricsSection = document.getElementById('metricsSection');
+        const metricsTable = document.querySelector('#metricsTable tbody');
+        const detectedSection = document.getElementById('detectedSection');
+        const detectedChar = document.getElementById('detectedChar');
+        const ocrPlaceholder = document.getElementById('ocrPlaceholder');
+
+        let lastDataUrl = null;
+
+        fileInput.addEventListener('change', (e) => {
+            const f = e.target.files[0];
+            if (!f) return;
+            btnEvaluate.disabled = false;
+            const r = new FileReader();
+            r.onload = () => {
+                lastDataUrl = r.result;
+                uploadPreview.innerHTML = `
+                    <div class="img-card">
+                        <img src="${r.result}" alt="Imagen subida">
+                        <span>Imagen subida</span>
+                    </div>
+                `;
+            };
+            r.readAsDataURL(f);
+        });
+
+        btnEvaluate.addEventListener('click', async () => {
+            const char = targetChar.value.trim();
+            if (!char) {
+                alert('Escribe el carácter a comparar (ej: B, a, 1)');
+                return;
+            }
+            const file = fileInput.files[0];
+            if (!file) {
+                alert('Selecciona una imagen primero');
+                return;
+            }
+            btnEvaluate.disabled = true;
+            btnEvaluate.textContent = 'Evaluando...';
+
+            const form = new FormData();
+            form.append('file', file);
+            form.append('target_char', char);
+
+            try {
+                const res = await fetch(`${API_URL}/evaluate`, {
+                    method: 'POST',
+                    body: form,
+                });
+                const data = await res.json();
+
+                if (data.error) {
+                    resultsSection.style.display = 'block';
+                    resultsGrid.innerHTML = `<div class="error-msg">${data.error}</div>`;
+                    scoreFinal.textContent = '—';
+                    btnEvaluate.disabled = false;
+                    btnEvaluate.textContent = 'Evaluar';
+                    return;
+                }
+
+                // Sección de resultados
+                resultsSection.style.display = 'block';
+                resultsGrid.innerHTML = `
+                    <div class="img-card">
+                        <img src="${lastDataUrl}" alt="Imagen subida">
+                        <span>Imagen subida</span>
+                    </div>
+                    <div class="img-card">
+                        <img src="data:image/png;base64,${data.template_b64}" alt="Plantilla">
+                        <span>Plantilla (${data.char})</span>
+                    </div>
+                    <div class="img-card">
+                        <img src="data:image/png;base64,${data.image_b64}" alt="Comparación">
+                        <span>Comparación y score</span>
+                    </div>
+                `;
+                scoreFinal.textContent = `${data.score_final}%`;
+
+                // Métricas
+                metricsSection.style.display = 'block';
+                const m = data.metrics;
+                const geo = m.geometric || {};
+                const traj = m.trajectory_error ?? 0;
+                const topoMatch = m.topology?.match ?? false;
+                const cosScore = m.segment_cosine?.score ?? 50;
+
+                const scoreProc = geo.procrustes_score ?? 0;
+                const hDist = geo.hausdorff ?? 999;
+                const scoreH = Math.max(0, 100 - Math.max(0, hDist - 5) * 2);
+                const scoreSsim = geo.ssim_score ?? 0;
+                const scoreTopo = topoMatch ? 100 : 30;
+                const scoreTraj = Math.max(0, 100 - traj * 3);
+                const scoreCos = Math.max(0, Math.min(100, cosScore));
+
+                const rows = [
+                    ['Procrustes', scoreProc, '28%'],
+                    ['Hausdorff', scoreH, '12%'],
+                    ['SSIM', scoreSsim, '20%'],
+                    ['Topología', scoreTopo, '25%'],
+                    ['Trayectoria', scoreTraj, '10%'],
+                    ['Coseno segmentos', scoreCos, '5%'],
+                ];
+
+                metricsTable.innerHTML = rows.map(([name, val, w]) => `
+                    <tr>
+                        <td class="metric-name">${name}</td>
+                        <td class="metric-value">${val}</td>
+                        <td class="metric-weight">${w}</td>
+                    </tr>
+                `).join('');
+
+                // Carácter detectado
+                detectedSection.style.display = 'block';
+                if (data.detected_char != null) {
+                    detectedChar.textContent = data.detected_char;
+                    ocrPlaceholder.style.display = 'none';
+                } else {
+                    detectedChar.innerHTML = '<span class="placeholder-ocr">—</span>';
+                    ocrPlaceholder.style.display = 'block';
+                }
+            } catch (err) {
+                resultsSection.style.display = 'block';
+                resultsGrid.innerHTML = `<div class="error-msg">Error: ${err.message}. ¿Está el backend corriendo en ${API_URL}?</div>`;
+                scoreFinal.textContent = '—';
+            }
+            btnEvaluate.disabled = false;
+            btnEvaluate.textContent = 'Evaluar';
+        });
+    </script>
+</body>
+</html>

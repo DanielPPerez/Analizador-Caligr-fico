@@ -7,3 +7,7 @@ matplotlib
 scikit-image
 scipy
 pillow
+# Librerías para ResNet y ONNX
+tensorflow>=2.10.0
+onnxruntime
+tf2onnx
